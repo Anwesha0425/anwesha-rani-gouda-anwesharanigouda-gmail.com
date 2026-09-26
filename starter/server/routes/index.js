@@ -1,17 +1,29 @@
-// Route registration. The router is deliberately tiny: createRouter() from
-// ../router.js, first match wins, so register specific paths before parameterised
-// ones ('/members/me' before '/members/:userId').
-//
-// YOURS TO WRITE. The file list is empty on purpose — every endpoint in BRIEF.md §5.1
-// is yours to add, and the response shapes the console reads are in §5.2.
-//
-// Suggested split, mirroring the API: auth, orgs (orgs + members + effective + audit),
-// invites, devices (devices + grants), sessions. Keep the registration order here.
-//
-// The server boots with this file empty: every /v1/* request returns 404 until you
-// register something. That is the intended starting line.
+// Route registration. First match wins — register specific paths before parameterised ones.
+// /members/me must come before /members/:userId
+// /invites/:token (public) is registered directly (not under /orgs/:org)
+
+import { registerAuthRoutes } from './auth.js';
+import { registerOrgRoutes } from './orgs.js';
+import { registerMemberRoutes } from './members.js';
+import { registerDeviceRoutes } from './devices.js';
+import { registerSessionRoutes } from './sessions.js';
 
 export function registerRoutes(router, deps) {
   const { db, secret } = deps;
-  void db; void secret;
+
+  // Auth routes (login and refresh are public; token and me are authenticated)
+  registerAuthRoutes(router, { db, secret });
+
+  // Org routes
+  registerOrgRoutes(router, { db, secret });
+
+  // Member + invite routes
+  // Register /members/me BEFORE /members/:userId so 'me' is not captured as a userId
+  registerMemberRoutes(router, { db, secret });
+
+  // Device + grant routes
+  registerDeviceRoutes(router, { db, secret });
+
+  // Session + effective + audit routes
+  registerSessionRoutes(router, { db, secret });
 }
