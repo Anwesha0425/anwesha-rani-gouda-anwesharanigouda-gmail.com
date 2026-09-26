@@ -1,29 +1,53 @@
 // Append-only audit writes.
 //
-// YOURS TO WRITE. This file ships as a stub.
+// audit_events has BEFORE UPDATE / BEFORE DELETE triggers: this module only INSERTs.
 //
-// audit_events has BEFORE UPDATE / BEFORE DELETE triggers, so this module only ever
-// INSERTs. Two things the spec is explicit about (BRIEF.md §4, PERMISSIONS.md §8):
+// Two rules from the spec (BRIEF.md §4, PERMISSIONS.md §8):
+//   1. DENIED attempts are recorded, not just successes.
+//   2. A single action produces a single row — write inside the same transaction
+//      as the change. Do NOT also log from a wrapper.
 //
-//   - DENIED attempts are recorded, not just successes. A log that only holds
-//     successes cannot answer "who tried to change what".
-//   - a single action produces a single row. Write the success row inside the same
-//     transaction as the change it describes; do not also log the allow from a wrapper.
-//
-// Schema columns: id, org_id (NOT NULL), actor_id, action, target_type, target_id,
-// result ('allow'|'deny'), reason_code, request_id, at.
+// Schema: id, org_id (NOT NULL), actor_id, action, target_type, target_id,
+//         result ('allow'|'deny'), reason_code, request_id, at
 
-const todo = (name) =>
-  Object.assign(
-    new Error(`TODO: server/audit.js — ${name}() is yours to write (BRIEF.md §3).`),
-    { code: 'NOT_IMPLEMENTED' }
-  );
+import { randomUUID } from 'node:crypto';
+import { HttpError } from './http.js';
 
 export function audit(db, { orgId, actorId, action, targetType, targetId, result, reasonCode, requestId }) {
-  throw todo('audit');
+  db.prepare(`
+    INSERT INTO audit_events (id, org_id, actor_id, action, target_type, target_id, result, reason_code, request_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    `evt_${randomUUID().replace(/-/g, '').slice(0, 16)}`,
+    orgId,
+    actorId ?? null,
+    action,
+    targetType ?? null,
+    targetId ?? null,
+    result,
+    reasonCode ?? null,
+    requestId ?? null
+  );
 }
 
-// Run fn(); if it refuses with a permission error, record the denial before rethrowing.
+// Run fn(); if it throws a 403 HttpError (permission error), record the denial and rethrow.
+// meta = { action, targetType, targetId }
 export function auditDenials(db, ctx, meta, fn) {
-  throw todo('auditDenials');
+  try {
+    return fn();
+  } catch (err) {
+    if (err instanceof HttpError && err.status === 403) {
+      audit(db, {
+        orgId: ctx.orgId,
+        actorId: ctx.userId,
+        action: meta.action,
+        targetType: meta.targetType ?? null,
+        targetId: meta.targetId ?? null,
+        result: 'deny',
+        reasonCode: err.reason ?? 'missing_permission',
+        requestId: ctx.requestId ?? null,
+      });
+    }
+    throw err;
+  }
 }
