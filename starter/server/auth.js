@@ -71,12 +71,43 @@ export function issueAccessToken({ userId, orgId, role, permVersion }, secret) {
 // `node scripts/check-jwt.js` is the public test suite for this function.
 // ---------------------------------------------------------------------------
 export function verifyAccessToken(token, secret) {
-  // YOURS TO WRITE. Every failure mode listed above must be a 401 UNAUTHENTICATED.
-  // `node scripts/check-jwt.js` is the public suite for this function.
-  throw Object.assign(
-    new Error('TODO: server/auth.js — verifyAccessToken() is yours to write (AUTH-DATA-MODEL.md §10).'),
-    { code: 'NOT_IMPLEMENTED' }
-  );
+  // Failure 1: must be exactly 3 dot-separated segments
+  if (typeof token !== 'string') throw unauthenticated('invalid token');
+  const parts = token.split('.');
+  if (parts.length !== 3) throw unauthenticated('invalid token structure');
+
+  const [headerB64, payloadB64, sigB64] = parts;
+
+  // Failure 2: header and payload must be valid base64url-encoded JSON
+  let header, claims;
+  try { header = JSON.parse(unb64(headerB64)); } catch { throw unauthenticated('invalid token header'); }
+  try { claims = JSON.parse(unb64(payloadB64)); } catch { throw unauthenticated('invalid token payload'); }
+
+  // Failure 3: alg must be HS256, typ must be JWT — do NOT trust the header to select alg
+  // This is the alg:none and algorithm-substitution defence.
+  if (header.alg !== ALG) throw unauthenticated('unsupported algorithm');
+  if (header.typ !== 'JWT') throw unauthenticated('invalid token type');
+
+  // Failure 4: signature must match, compared in constant time
+  const expectedSig = createHmac('sha256', secret).update(`${headerB64}.${payloadB64}`).digest();
+  const actualSig = unb64(sigB64);
+  if (expectedSig.length !== actualSig.length) throw unauthenticated('invalid signature');
+  if (!timingSafeEqual(expectedSig, actualSig)) throw unauthenticated('invalid signature');
+
+  // Failure 5: exp must exist, be a number, and be strictly greater than now (exp <= now is expired)
+  const now = Math.floor(Date.now() / 1000);
+  if (typeof claims.exp !== 'number' || claims.exp <= now) throw unauthenticated('token expired');
+
+  // Failure 6: iss and aud must match ours exactly
+  if (claims.iss !== ISS) throw unauthenticated('invalid issuer');
+  if (claims.aud !== AUD) throw unauthenticated('invalid audience');
+
+  // Failure 7: jti must be present and non-empty
+  if (!claims.jti || typeof claims.jti !== 'string' || claims.jti.trim() === '') {
+    throw unauthenticated('missing token id');
+  }
+
+  return claims;
 }
 
 
